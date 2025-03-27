@@ -1,5 +1,0 @@
-포터블
-pyinstaller --noconfirm --windowed --icon=Lexi_Convert.png --add-data="Lexi_Convert.png;." Lexi_Convert.py
-
-단일EXE
-pyinstaller --noconfirm --onefile --windowed --icon=Lexi_Convert.png --add-data="Lexi_Convert.png;." Lexi_Convert.py
