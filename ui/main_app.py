@@ -13,9 +13,11 @@ from utils.module_checker import check_required_modules
 from utils.json_encoder import CustomJSONEncoder
 from converters.common import file_to_json
 from converters.exporters import convert_to_markdown, convert_to_text, save_json_file
+from converters.file_merger import merge_text_files, merge_code_files, merge_json_files, merge_documents
 
 from ui.basic_tab import BasicTab
 from ui.advanced_tab import AdvancedTab
+from ui.merger_tab import MergerTab  # 새로 추가된 병합 탭
 
 class DoctoJSONApp(tk.Tk):
     def __init__(self):
@@ -28,7 +30,56 @@ class DoctoJSONApp(tk.Tk):
         self.geometry("800x850")
         self.resizable(True, True)
         
+        # 경로 및 작업 상태 변수 초기화
+        self.input_folder = ""  # 파일들이 들어있는 폴더
+        self.output_folder = ""  # JSON 파일을 저장할 폴더
+        self.document_files = []  # 변환할 파일 목록
+        self.is_converting = False
+        self.stop_flag = False  # 변환 중단 플래그
+        
+        # 병합 관련 변수 (NEW)
+        self.merge_files = []   # 병합할 파일 목록
+        self.is_merging = False  # 병합 작업 중 플래그
+        self.merge_mode = tk.StringVar(value="directory")  # 병합 모드 (directory 또는 files)
+        self.file_pattern = tk.StringVar(value="*.txt")    # 병합할 파일 패턴
+        self.include_filenames = tk.BooleanVar(value=True) # 파일명 포함 여부
+        self.merge_output_format = tk.StringVar(value="txt") # 병합 출력 포맷
+        
+        # 입력 모드 선택 변수 (파일 또는 폴더)
+        self.input_mode = tk.StringVar(value="files")
+        
+        # 설정 변수들
+        self.chunk_size = tk.IntVar(value=1000)
+        self.include_toc = tk.BooleanVar(value=True)
+        self.advanced_metadata = tk.BooleanVar(value=True)
+        self.gpt_optimized = tk.BooleanVar(value=True)
+        self.output_format = tk.StringVar(value="json")  # json, markdown, text
+        self.merge_output = tk.BooleanVar(value=False)  # 모든 파일을 하나로 병합
+        self.merge_filename = tk.StringVar(value="merged_output")
+        
+        # 디버그 모드 추가
+        self.debug_mode = tk.BooleanVar(value=False)
+        
+        # 마지막 경로 저장
+        self.save_last_paths = tk.BooleanVar(value=True)
+        
         # 애플리케이션 아이콘 설정 (작업 표시줄 포함)
+        self.setup_icon()
+        
+        # 테마 및 스타일 설정
+        self.setup_styles()
+        
+        # UI 위젯 생성
+        self.create_widgets()
+        
+        # 마지막 경로 로드 - UI 초기화 후 호출해야 오류가 발생하지 않음
+        try:
+            self.load_last_paths()
+        except Exception as e:
+            print(f"설정 로드 중 오류 발생: {e}")
+    
+    def setup_icon(self):
+        """애플리케이션 아이콘 설정"""
         try:
             from PIL import Image, ImageTk
             
@@ -56,37 +107,6 @@ class DoctoJSONApp(tk.Tk):
                 print(f"아이콘 파일을 찾을 수 없습니다: {icon_path}")
         except Exception as e:
             print(f"아이콘 설정 실패: {e}")
-        
-        # 테마 및 스타일 설정
-        self.setup_styles()
-        
-        # 경로 및 작업 상태 변수
-        self.input_folder = ""  # 파일들이 들어있는 폴더
-        self.output_folder = ""  # JSON 파일을 저장할 폴더
-        self.document_files = []  # 변환할 파일 목록
-        self.is_converting = False
-        self.stop_flag = False  # 변환 중단 플래그
-        
-        # 입력 모드 선택 변수 (파일 또는 폴더)
-        self.input_mode = tk.StringVar(value="files")
-        
-        # 설정 변수들
-        self.chunk_size = tk.IntVar(value=1000)
-        self.include_toc = tk.BooleanVar(value=True)
-        self.advanced_metadata = tk.BooleanVar(value=True)
-        self.gpt_optimized = tk.BooleanVar(value=True)
-        self.output_format = tk.StringVar(value="json")  # json, markdown, text
-        self.merge_output = tk.BooleanVar(value=False)  # 모든 파일을 하나로 병합
-        self.merge_filename = tk.StringVar(value="merged_output")
-        
-        # 디버그 모드 추가
-        self.debug_mode = tk.BooleanVar(value=False)
-        
-        # 마지막 경로 저장
-        self.save_last_paths = tk.BooleanVar(value=True)
-        self.load_last_paths()
-        
-        self.create_widgets()
     
     def setup_styles(self):
         """UI 테마 및 스타일 설정"""
@@ -132,15 +152,20 @@ class DoctoJSONApp(tk.Tk):
         
         # 탭 생성
         basic_tab = ttk.Frame(notebook)
-        notebook.add(basic_tab, text="기본 설정")
+        notebook.add(basic_tab, text="파일 바꾸기")
         
         # 고급 탭
         advanced_tab = ttk.Frame(notebook)
-        notebook.add(advanced_tab, text="고급 설정")
+        notebook.add(advanced_tab, text="바꾸기 설정")
+        
+        # 병합 탭 (NEW)
+        merger_tab = ttk.Frame(notebook)
+        notebook.add(merger_tab, text="파일 합치기")
         
         # 탭 초기화
         self.basic_tab_ui = BasicTab(basic_tab, self)
         self.advanced_tab_ui = AdvancedTab(advanced_tab, self)
+        self.merger_tab_ui = MergerTab(merger_tab, self)  # 새로운 병합 탭 초기화
         
         # 공통 하단 영역: 변환/취소 버튼, 진행 바, 로그 출력
         bottom_frame = ttk.Frame(main_frame)
@@ -150,13 +175,18 @@ class DoctoJSONApp(tk.Tk):
         button_frame = ttk.Frame(bottom_frame)
         button_frame.pack(fill=tk.X, pady=10)
         
-        self.convert_btn = ttk.Button(button_frame, text="변환 시작", 
+        self.convert_btn = ttk.Button(button_frame, text="바꾸기 시작", 
                                      style="Primary.TButton", command=self.start_conversion)
         self.convert_btn.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         
-        self.cancel_btn = ttk.Button(button_frame, text="변환 중단", 
+        self.cancel_btn = ttk.Button(button_frame, text="바꾸기 중단", 
                                    command=self.stop_conversion, state=tk.DISABLED)
         self.cancel_btn.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # 병합 버튼 추가 (NEW)
+        self.merge_btn = ttk.Button(button_frame, text="합치기 시작", 
+                                   style="Primary.TButton", command=self.start_merger)
+        self.merge_btn.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         
         # 진행 상황 표시 영역
         progress_frame = ttk.Frame(bottom_frame)
@@ -175,7 +205,7 @@ class DoctoJSONApp(tk.Tk):
         self.progress_percent.pack(side=tk.LEFT, padx=(10, 0))
         
         # 로그 출력 (ScrolledText)
-        log_frame = ttk.LabelFrame(bottom_frame, text="변환 로그")
+        log_frame = ttk.LabelFrame(bottom_frame, text="로그")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=10)
         
         self.log_text = scrolledtext.ScrolledText(log_frame, width=80, height=15, 
@@ -187,8 +217,8 @@ class DoctoJSONApp(tk.Tk):
         self.log_text.tag_configure("warning", foreground="orange")
         
         # 초기 로그 메시지
-        self.log("✨ 문서 변환기가 준비되었습니다.", "info")
-        self.log("문서 선택 방식을 지정한 후 변환할 파일을 준비해주세요.")
+        self.log("✨ Lexi Convert가 준비되었습니다.", "info")
+        self.log("문서 변환 또는 파일 병합 기능을 사용할 수 있습니다.")
         
         # 초기 모드에 따라 UI 조정
         self.input_mode_changed()
@@ -345,8 +375,17 @@ class DoctoJSONApp(tk.Tk):
                 
                 self.input_folder = config.get("input_folder", "")
                 self.output_folder = config.get("output_folder", "")
+                
+                # UI가 이미 생성되었다면 경로 표시 업데이트
+                if hasattr(self, 'input_folder_entry'):
+                    self.input_folder_entry.delete(0, tk.END)
+                    self.input_folder_entry.insert(0, self.input_folder)
+                
+                if hasattr(self, 'output_folder_entry'):
+                    self.output_folder_entry.delete(0, tk.END)
+                    self.output_folder_entry.insert(0, self.output_folder)
         except Exception as e:
-            self.log(f"⚠️ 설정 로드 중 오류 발생: {e}", "warning")
+            print(f"⚠️ 설정 로드 중 오류 발생: {e}")
     
     def start_conversion(self):
         # 입력 방식에 따라 필요한 변수 업데이트
@@ -480,8 +519,8 @@ class DoctoJSONApp(tk.Tk):
                         chunk['id'] = new_id
                         # 파일 소스 정보 추가
                         chunk['source_file'] = base_name
+                        merged_data['chunks'].append(chunk)
                     
-                    merged_data['chunks'].extend(data['chunks'])
                     merged_data['total_chunks'] += len(data['chunks'])
                 
                 elif 'chapters' in data and 'chapters' in merged_data:
@@ -513,7 +552,6 @@ class DoctoJSONApp(tk.Tk):
                         output_filename = base_name + output_ext
                         output_path = os.path.join(self.output_folder, output_filename)
                         
-                        # JSON 직렬화 - 사용자 정의 인코더 사용
                         success, error = save_json_file(data, output_path)
                         if not success:
                             self.log(f"❌ JSON 저장 실패: {error}", "error")
@@ -613,21 +651,187 @@ class DoctoJSONApp(tk.Tk):
         # 완료 시 파일 탐색기에서 출력 폴더 열기 옵션 제공
         if not self.stop_flag:
             if messagebox.askyesno("변환 완료", f"변환이 완료되었습니다.\n출력 폴더({self.output_folder})를 탐색기에서 열까요?"):
-                try:
-                    if sys.platform == 'win32':
-                        os.startfile(self.output_folder)
-                    elif sys.platform == 'darwin':  # macOS
-                        subprocess.run(['open', self.output_folder])
-                    else:  # linux
-                        subprocess.run(['xdg-open', self.output_folder])
-                except Exception as e:
-                    self.log(f"⚠️ 폴더 열기 실패: {str(e)}", "warning")
+                self.open_file_explorer(self.output_folder)
         
         # UI 상태 복원
         self.is_converting = False
         self.stop_flag = False
         self.convert_btn.config(state=tk.NORMAL)
         self.cancel_btn.config(state=tk.DISABLED)
+    
+    def start_merger(self):
+        """병합 작업 시작"""
+        # 이미 작업 중이면 취소
+        if self.is_converting or self.is_merging:
+            messagebox.showwarning("경고", "이미 진행 중인 작업이 있습니다. 완료 후 다시 시도하세요.")
+            return
+        
+        # 병합 모드에 따라 파일 목록 확인
+        if self.merge_mode.get() == "directory":
+            directory_path = self.merge_dir_entry.get().strip()
+            if not directory_path or not os.path.isdir(directory_path):
+                messagebox.showwarning("경고", "유효한 폴더 경로를 선택해주세요.")
+                return
+        else:  # files 모드
+            if not hasattr(self, 'merge_files') or not self.merge_files:
+                messagebox.showwarning("경고", "병합할 파일을 선택해주세요.")
+                return
+        
+        # 출력 폴더와 파일명 확인
+        output_folder = self.merge_output_folder_entry.get().strip()
+        if not output_folder:
+            messagebox.showwarning("경고", "출력 폴더를 지정해주세요.")
+            return
+        
+        filename = self.merge_output_filename.get().strip()
+        if not filename:
+            messagebox.showwarning("경고", "출력 파일 이름을 지정해주세요.")
+            return
+        
+        # 확장자가 없으면 추가
+        file_ext = "." + self.merge_output_format.get().lower()
+        if not filename.lower().endswith(file_ext):
+            filename += file_ext
+        
+        # 출력 경로 구성
+        output_path = os.path.join(output_folder, filename)
+        
+        # 출력 디렉토리 생성 (필요한 경우)
+        if not os.path.exists(output_folder):
+            try:
+                os.makedirs(output_folder, exist_ok=True)
+            except Exception as e:
+                messagebox.showerror("오류", f"출력 디렉토리 생성 실패: {str(e)}")
+                return
+        
+        # UI 상태 업데이트
+        self.is_merging = True
+        self.convert_btn.config(state=tk.DISABLED)
+        self.merge_btn.config(state=tk.DISABLED)
+        self.cancel_btn.config(state=tk.NORMAL)
+        self.progress_bar["value"] = 0
+        self.progress_percent.config(text="0%")
+        self.progress_status.config(text="병합 준비 중...")
+        
+        # 로그 초기화 및 시작 메시지
+        self.log_text.delete("1.0", tk.END)
+        self.log("🔄 파일 병합 작업을 시작합니다...", "info")
+        
+        # 스레드로 병합 작업 실행
+        threading.Thread(target=self.merge_process, daemon=True).start()
+
+    
+    def merge_process(self):
+        """파일 병합 프로세스를 실행"""
+        try:
+            # 병합 모드에 따라 처리
+            if self.merge_mode.get() == "directory":
+                directory_path = self.merge_dir_entry.get().strip()
+                # 출력 폴더와 파일 이름 조합
+                output_folder = self.merge_output_folder_entry.get().strip()
+                filename = self.merge_output_filename.get().strip()
+                file_ext = "." + self.merge_output_format.get().lower()
+                
+                # 확장자가 없으면 추가
+                if not filename.lower().endswith(file_ext):
+                    filename += file_ext
+                
+                output_path = os.path.join(output_folder, filename)
+                file_pattern = self.file_pattern.get().strip()
+                include_filenames = self.include_filenames.get()
+                include_folder_structure = self.include_folder_structure.get()
+                recursive = self.recursive_search.get()
+                
+                self.log(f"📁 폴더: {directory_path}")
+                self.log(f"🔍 파일 패턴: {file_pattern}")
+                if recursive:
+                    self.log("🔍 하위 폴더 포함: 예")
+                self.progress_status.config(text="파일 검색 중...")
+                
+                # 수정된 부분: 먼저 파일 패턴에 따라 처리 방법 결정
+                if file_pattern.lower().endswith(".json"):
+                    self.log("📊 JSON 파일 병합 중...")
+                    success, message = merge_json_files(directory_path, output_path, recursive)
+                elif file_pattern.lower().endswith((".py", ".c", ".h", ".cpp", ".cs")):
+                    self.log(f"📝 코드 파일 병합 중... ({file_pattern})")
+                    file_ext = os.path.splitext(file_pattern)[1]  # *.py -> .py
+                    success, message = merge_code_files(directory_path, output_path, file_ext, 
+                                                    include_filenames, include_folder_structure, 
+                                                    recursive)
+                else:
+                    # 기본 텍스트 파일 병합
+                    self.log(f"📄 텍스트 파일 병합 중... ({file_pattern})")
+                    success, message = merge_text_files(directory_path, output_path, file_pattern, 
+                                                    include_filenames, include_folder_structure, 
+                                                    recursive)
+            
+            else:  # files 모드
+                # 출력 폴더와 파일 이름 조합
+                output_folder = self.merge_output_folder_entry.get().strip()
+                filename = self.merge_output_filename.get().strip()
+                file_ext = "." + self.merge_output_format.get().lower()
+                
+                # 확장자가 없으면 추가
+                if not filename.lower().endswith(file_ext):
+                    filename += file_ext
+                
+                output_path = os.path.join(output_folder, filename)
+                self.log(f"📄 선택한 {len(self.merge_files)}개 파일 병합 중...")
+                
+                # 선택한 파일들 병합
+                success, message = merge_documents(self.merge_files, output_path, self.merge_output_format.get())
+            
+            # 결과 처리
+            if success:
+                self.log(f"✅ {message}", "success")
+                self.progress_bar["value"] = 100
+                self.progress_percent.config(text="100%")
+                
+                # 완료 후 파일 탐색기에서 출력 파일 열기 옵션 제공
+                if messagebox.askyesno("병합 완료", f"파일 병합이 완료되었습니다.\n결과 파일을 열어보시겠습니까?"):
+                    self.open_file(output_path)
+            else:
+                self.log(f"❌ {message}", "error")
+        
+        except Exception as e:
+            self.log(f"❌ 병합 중 오류 발생: {str(e)}", "error")
+            if self.debug_mode.get():
+                import traceback
+                self.log(f"상세 오류: {traceback.format_exc()}", "error")
+        
+        finally:
+            # UI 상태 복원
+            self.is_merging = False
+            self.progress_status.config(text="준비됨")
+            self.convert_btn.config(state=tk.NORMAL)
+            self.merge_btn.config(state=tk.NORMAL)
+            self.cancel_btn.config(state=tk.DISABLED)
+
+
+    
+    def open_file(self, file_path):
+        """파일을 시스템 기본 앱으로 엽니다."""
+        try:
+            if sys.platform == 'win32':
+                os.startfile(file_path)
+            elif sys.platform == 'darwin':  # macOS
+                subprocess.run(['open', file_path])
+            else:  # linux
+                subprocess.run(['xdg-open', file_path])
+        except Exception as e:
+            self.log(f"⚠️ 파일 열기 실패: {str(e)}", "warning")
+    
+    def open_file_explorer(self, path):
+        """폴더를 파일 탐색기에서 엽니다."""
+        try:
+            if sys.platform == 'win32':
+                os.startfile(path)
+            elif sys.platform == 'darwin':  # macOS
+                subprocess.run(['open', path])
+            else:  # linux
+                subprocess.run(['xdg-open', path])
+        except Exception as e:
+            self.log(f"⚠️ 폴더 열기 실패: {str(e)}", "warning")
     
     def log(self, message, tag=None):
         """로그 메시지를 로그 창에 추가합니다."""
