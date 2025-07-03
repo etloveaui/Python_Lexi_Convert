@@ -8,7 +8,9 @@ def check_required_modules():
     required_modules = {
         "ebooklib": "ebooklib",
         "beautifulsoup4": "bs4",
-        "pymupdf": "fitz"  # PDF 처리 추가
+        "pymupdf": "fitz",  # PDF 처리 추가
+        "pandas": "pandas",       # ✅ pandas 추가
+        "lxml": "lxml"            # ✅ lxml 추가 (pandas가 내부적으로 사용)
     }
     
     for module_name, import_name in required_modules.items():

@@ -1,93 +1,121 @@
 # converters/pdf_converter.py
+
 import os
 import fitz  # PyMuPDF
+import pandas as pd
 from datetime import datetime
-from utils.text_utils import split_text_into_chunks
+from io import StringIO
 
 # PDF 지원 체크
 try:
-    import fitz  # PyMuPDF
+    import fitz
     PDF_SUPPORT = True
 except ImportError:
     fitz = None
     PDF_SUPPORT = False
 
+def parse_pdf_table(table, page_height):
+    """PyMuPDF의 Table 객체를 JSON 친화적인 형태로 변환"""
+    header_names = [cell for cell in table.header.names]
+    rows_data = []
+    for row in table.rows:
+        row_dict = {}
+        for i, cell_text in enumerate(row.cells):
+            header = header_names[i] if i < len(header_names) else f"column_{i+1}"
+            row_dict[header] = cell_text
+        rows_data.append(row_dict)
+    return rows_data
+
 def pdf_to_json(pdf_path, chunk_size=1000, advanced_metadata=True, gpt_optimized=True):
-    """PDF 파일을 JSON 형식으로 변환합니다."""
+    """
+    구조화된 리포트 PDF 파일을 분석하여 계층적인 JSON으로 변환합니다.
+    """
+    if not PDF_SUPPORT:
+        return None, "PDF 변환을 위해 PyMuPDF(fitz) 모듈이 필요합니다."
+
     try:
-        if not PDF_SUPPORT:
-            return None, "PDF 변환을 위해 PyMuPDF(fitz) 모듈이 필요합니다. 'pip install pymupdf'로 설치하세요."
-        
         doc = fitz.open(pdf_path)
     except Exception as e:
         return None, f"PDF 파일을 열기 실패: {str(e)}"
-    
+
     book_data = {}
-    
-    # 메타데이터 추출
-    metadata = doc.metadata
     book_data['metadata'] = {
-        'title': metadata.get('title', os.path.basename(pdf_path)),
-        'creator': metadata.get('author', 'Unknown'),
-        'subject': metadata.get('subject', ''),
-        'keywords': metadata.get('keywords', ''),
-        'language': '',  # PDF에서는 언어 메타데이터가 명확하지 않음
+        'title': doc.metadata.get('title', os.path.basename(pdf_path)),
+        'creator': doc.metadata.get('author', 'Unknown'),
         'pages': len(doc),
         'file_type': 'PDF'
     }
-    
-    # 확장 메타데이터 추가
+
     if advanced_metadata:
         book_data['metadata'].update({
             'file_path': pdf_path,
             'file_name': os.path.basename(pdf_path),
             'file_size': os.path.getsize(pdf_path),
             'processed_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'converter_version': "2.1.0"
+            'converter_version': "2.2.0"
         })
-    
-    # 텍스트 추출
-    if gpt_optimized:
-        # GPT 최적화: 청크로 분할
-        chunks = []
-        for page_idx, page in enumerate(doc, 1):
-            text = page.get_text()
-            if not text.strip():
-                continue
-                
-            # 페이지별 텍스트를 청크로 분할
-            text_chunks = split_text_into_chunks(text, chunk_size)
+
+    sections = []
+    current_section = {}
+    current_subsection = {}
+
+    for page_num, page in enumerate(doc, 1):
+        tables = page.find_tables()
+        table_bboxes = [table.bbox for table in tables]
+        
+        # ✅ 구버전과 호환되도록 flags 옵션을 사용하지 않습니다.
+        blocks = page.get_text("dict")["blocks"]
+        
+        font_sizes = [span['size'] for b in blocks for l in b.get('lines', []) for span in l.get('spans', [])]
+        if not font_sizes: continue
+        
+        common_font_size = max(set(font_sizes), key=font_sizes.count)
+        h2_threshold = common_font_size * 1.5
+        h3_threshold = common_font_size * 1.2
+
+        for b in blocks:
+            block_bbox = fitz.Rect(b['bbox'])
+            in_table = any(block_bbox.intersects(table_bbox) for table_bbox in table_bboxes)
+            if in_table or not b.get('lines'): continue
+
+            block_text = ""
+            block_font_size = 0
+            for l in b['lines']:
+                for s in l['spans']:
+                    block_text += s['text'] + " "
+                    if s['size'] > block_font_size:
+                        block_font_size = s['size']
             
-            for i, chunk in enumerate(text_chunks):
-                chunks.append({
-                    'id': f"pg{page_idx}_{i+1}",
-                    'page_number': page_idx,
-                    'chunk_index': i+1,
-                    'content': chunk,
-                    'char_count': len(chunk)
-                })
+            block_text = block_text.strip()
+            if not block_text: continue
+            
+            if block_font_size >= h2_threshold:
+                if current_section: sections.append(current_section)
+                current_section = {'title': block_text, 'subsections': [], 'content': []}
+                current_subsection = {}
+            elif block_font_size >= h3_threshold:
+                if current_subsection: current_section.get('subsections', []).append(current_subsection)
+                current_subsection = {'subtitle': block_text, 'content': []}
+            else:
+                content_item = {'type': 'paragraph', 'text': block_text}
+                if current_subsection:
+                    current_subsection.get('content', []).append(content_item)
+                elif current_section:
+                    current_section.get('content', []).append(content_item)
         
-        book_data['chunks'] = chunks
-        book_data['total_chunks'] = len(chunks)
-    
-    else:
-        # 페이지별 텍스트 전체 저장
-        pages = []
-        for page_idx, page in enumerate(doc, 1):
-            text = page.get_text()
-            if text.strip():
-                pages.append({
-                    'page_number': page_idx,
-                    'content': text
-                })
-        
-        book_data['pages'] = pages
-        book_data['total_pages'] = len(pages)
-    
-    # GPT 지식 파일에 활용 가능하도록 정보 추가
+        for table in tables:
+            table_data = parse_pdf_table(table, page.rect.height)
+            table_item = {'type': 'table', 'data': table_data}
+            if current_subsection:
+                current_subsection.get('content', []).append(table_item)
+            elif current_section:
+                current_section.get('content', []).append(table_item)
+
+    if current_subsection: current_section.get('subsections', []).append(current_subsection)
+    if current_section: sections.append(current_section)
+
+    book_data['sections'] = sections
     book_data['gpt_knowledge'] = True
-    book_data['format_version'] = "2.0" if gpt_optimized else "1.0"
-    book_data['chunked'] = gpt_optimized
     book_data['book_converter'] = "Lexi Convert by El Fenomeno"
     
     doc.close()

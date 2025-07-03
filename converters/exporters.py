@@ -63,6 +63,27 @@ def convert_to_markdown(json_data, output_path):
                     md_file.write(f"## 페이지 {page_num}\n\n")
                     md_file.write(f"{page['content']}\n\n")
                     md_file.write("---\n\n")
+
+            # ✅ [추가] HTML의 'sections' 형식 처리
+            elif 'sections' in json_data:
+                for section in json_data['sections']:
+                    md_file.write(f"## {section.get('title', '제목 없음')}\n\n")
+                    if 'subsections' in section:
+                        for sub in section['subsections']:
+                            md_file.write(f"### {sub.get('subtitle', '')}\n\n")
+                            for content_item in sub.get('content', []):
+                                if content_item.get('type') == 'paragraph':
+                                    md_file.write(f"{content_item.get('text', '')}\n\n")
+                                elif content_item.get('type') == 'table':
+                                    # 테이블 데이터를 마크다운 테이블 형식으로 변환
+                                    if content_item.get('data'):
+                                        headers = content_item['data'][0].keys()
+                                        md_file.write(f"| {' | '.join(headers)} |\n")
+                                        md_file.write(f"|{'---|' * len(headers)}\n")
+                                        for row in content_item['data']:
+                                            md_file.write(f"| {' | '.join(str(v) for v in row.values())} |\n")
+                                            md_file.write("\n")
+                                            md_file.write("---\n\n")
         
         return True, None
     except Exception as e:
@@ -121,6 +142,25 @@ def convert_to_text(json_data, output_path):
                     txt_file.write(f"=== 페이지 {page_num} ===\n\n")
                     txt_file.write(f"{page['content']}\n\n")
                     txt_file.write("-"*50 + "\n\n")
+
+            # ✅ [추가] HTML의 'sections' 형식 처리
+            elif 'sections' in json_data:
+                for section in json_data['sections']:
+                    txt_file.write(f"=== {section.get('title', '제목 없음')} ===\n\n")
+                    if 'subsections' in section:
+                        for sub in section['subsections']:
+                            txt_file.write(f"--- {sub.get('subtitle', '')} ---\n\n")
+                            for content_item in sub.get('content', []):
+                                if content_item.get('type') == 'paragraph':
+                                    txt_file.write(f"{content_item.get('text', '')}\n\n")
+                                elif content_item.get('type') == 'table':
+                                    # 테이블 데이터를 텍스트로 변환
+                                    if content_item.get('data'):
+                                        for row in content_item['data']:
+                                            row_text = ', '.join(f"{k}: {v}" for k, v in row.items())
+                                            txt_file.write(f"- {row_text}\n")
+                                            txt_file.write("\n")
+                                            txt_file.write("="*50 + "\n\n")
         
         return True, None
     except Exception as e:

@@ -98,5 +98,5 @@ class BasicTab:
         # GPT 최적화 옵션
         gpt_frame = ttk.Frame(output_frame)
         gpt_frame.pack(fill=tk.X, pady=5, padx=10)
-        ttk.Checkbutton(gpt_frame, text="GPT 분석에 최적화된 형식으로 변환 (청크 분할, 인덱싱 적용)",
+        ttk.Checkbutton(gpt_frame, text="문서 구조 무시하고 텍스트만 강제 분할 (단순 텍스트 문서용)",
                       variable=self.app.gpt_optimized).pack(anchor=tk.W)

@@ -52,7 +52,7 @@ class DoctoJSONApp(tk.Tk):
         self.chunk_size = tk.IntVar(value=1000)
         self.include_toc = tk.BooleanVar(value=True)
         self.advanced_metadata = tk.BooleanVar(value=True)
-        self.gpt_optimized = tk.BooleanVar(value=True)
+        self.gpt_optimized = tk.BooleanVar(value=False)
         self.output_format = tk.StringVar(value="json")  # json, markdown, text
         self.merge_output = tk.BooleanVar(value=False)  # 모든 파일을 하나로 병합
         self.merge_filename = tk.StringVar(value="merged_output")
@@ -255,12 +255,20 @@ class DoctoJSONApp(tk.Tk):
         """파일 선택 대화상자를 표시합니다."""
         files = filedialog.askopenfilenames(
             title="변환할 파일 선택",
-            filetypes=[("문서 파일", "*.epub *.pdf"), ("EPUB 파일", "*.epub"), ("PDF 파일", "*.pdf"), ("모든 파일", "*.*")]
+            filetypes=[
+                # ✅ "문서 파일" 목록에 html, htm 추가
+                ("문서 파일", "*.epub *.pdf *.html *.htm"),
+                ("HTML 파일", "*.html *.htm"), # ✅ HTML 파일 유형 추가
+                ("EPUB 파일", "*.epub"),
+                ("PDF 파일", "*.pdf"),
+                ("모든 파일", "*.*")
+            ]
         )
         
         if files:
             # 선택한 파일 중 지원되는 형식만 필터링
-            self.document_files = [f for f in files if f.lower().endswith(('.epub', '.pdf'))]
+            self.document_files = [f for f in files if f.lower().endswith(('.epub', '.pdf', '.html', '.htm'))]
+
             
             # 첫 번째 파일의 디렉토리를 입력 폴더로 설정 (아직 설정되지 않은 경우)
             if not self.input_folder and self.document_files:
@@ -340,7 +348,7 @@ class DoctoJSONApp(tk.Tk):
         
         for root, dirs, files in os.walk(folder):
             for file in files:
-                if file.lower().endswith((".epub", ".pdf")):
+                if file.lower().endswith((".epub", ".pdf", ".html", ".htm")):
                     self.document_files.append(os.path.join(root, file))
         
         count_added = len(self.document_files) - count_before
